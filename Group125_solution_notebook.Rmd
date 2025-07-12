@@ -1,0 +1,486 @@
+---
+title: "Group 125"
+output: html_notebook
+---
+
+## Import all the libraries as and when needed
+
+```{r}
+library(psych) #use for summary
+library(ggplot2) #use for plotting
+library(GGally)
+library(sf)
+library(dplyr)
+library(spdep)
+library(lmtest)
+library(texreg)
+library(spatialreg)
+library(viridis)
+```
+
+```{r}
+load("data_125.RData")
+```
+
+## Question 1: Descriptive Statistics of the County data dictionary
+
+```{r}
+# Understand the structure of the county_leukemia_125 data dictionary
+str(county_leukemia_125)
+
+# Summarize each column to get descriptive statistics for the whole county
+summary(county_leukemia_125[, c("id")]) # Since ids are categorical values it's not helpful to do statistics over such column.
+# Hence we rather described if the id is unique or not so that they are no duplicates
+length(unique(county_leukemia_125$id)) == nrow(county_leukemia_125) # Output is true, hence all the district ids are unique
+
+summary(county_leukemia_125[, c("leuk_cases")])
+#describe(county_leukemia_125[, c("leuk_cases")])
+
+# Give the understanding the AverageAge is a categorical variable with 3 levels, we wanted to describe the data via these categories
+summary(county_leukemia_125[, c("AverageAge")])
+
+# Summarize GreenNeighnorhoodIndex
+summary(county_leukemia_125[, c("GreenNeighborhoodIndex")])
+
+#Summarize cars per household
+summary(county_leukemia_125[, c("CarsPerHH")])
+
+# Summarize the population growth
+summary(county_leukemia_125[, c("PctPopGrowth")])
+
+# Summarize the fracing locations statistics
+loc_num <- 1:10
+
+for (num in loc_num) {
+  location <- paste0("Dist2FracLoc_", num) 
+  print(summary(county_leukemia_125[, c(location)]))
+}
+```
+
+Analysis: It shows that the data is has 500 samples with 20 variables. There are various datatypes like integer, numerical, Factor, etc.
+
+## Question 2: Plot your variables using maps and pairs plots
+
+### Maps of all variables
+
+```{r}
+#--------------------------Generating Maps---------------------------
+print("Create basic plot for all the columns")
+plot(county_leukemia_125,max.plot = 19)
+
+#---------------------------------------------------------------------
+print("Create a theme map for luekemia cases in unscaled manner")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = leuk_cases)) +
+  geom_sf(data = fracking_locations_125,
+          color = "red",
+          size = 3) +
+  scale_fill_gradient(low = "lightyellow", high = "orange", name = "Luekmia Cases (Unscaled)") + theme_minimal()
+#---------------------------------------------------------------------
+print("Create a theme map for Green Neighborhood Index")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = GreenNeighborhoodIndex)) +
+  geom_sf(data = fracking_locations_125,
+          color = "red",
+          size = 3) +
+  scale_fill_gradient(low = "lightgreen", high = "darkgreen", name = "Green Neighborhood Index") + theme_minimal()
+#---------------------------------------------------------------------
+print("Create a theme map for Average Age")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = AverageAge)) +
+  geom_sf(data = fracking_locations_125,
+          color = "red",
+          size = 3) + theme_minimal()
+#---------------------------------------------------------------------
+print("Create a theme map for Cars per household")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = CarsPerHH)) +
+  geom_sf(data = fracking_locations_125,
+          color = "black",
+          size = 3) + scale_fill_gradient(low = "lightblue", high = "red", name = "Cars per household")+theme_minimal()
+#---------------------------------------------------------------------
+print("Create a theme map for population growth(%)")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = PctPopGrowth)) +
+  geom_sf(data = fracking_locations_125,
+          color = "red",
+          size = 3)+ scale_fill_gradient(low = "yellow", high = "purple", name = "Population Growth (%)") + theme_minimal()
+
+#---------------------------------------------------------------------
+print("Create a theme map for population density")
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = PopDens)) +
+  geom_sf(data = fracking_locations_125,
+          color = "red",
+          size = 3) + scale_fill_gradient(name = "Population Density")+ theme_minimal()
+
+```
+
+### Map of scaled cases
+
+```{r}
+
+# Since the population density is relative so will be the cases we also scaled the cases with population density then used min-max normalization to normalize the values between 0 and 1 million.
+
+# Checking if fracking locations need to be transformed for county geometry
+fracking_locations_125_adjusted <- st_transform(fracking_locations_125, st_crs(county_leukemia_125))
+
+# Scale the Luekemia cases
+
+# Add column called cases_scaled to see how the cases are relatively distributed in the county
+county_leukemia_125$cases_scaled <- county_leukemia_125$leuk_cases/county_leukemia_125$PopDens
+
+# Use min-max normalization to scale the cases between 0 to 1_000_000
+county_leukemia_125$cases_scaled <- 
+(
+  (county_leukemia_125$cases_scaled - 
+  min(county_leukemia_125$cases_scaled)) / 
+  (max(county_leukemia_125$cases_scaled) - 
+  min(county_leukemia_125$cases_scaled))
+) * 1000000
+
+# Plot the scaled cases to see for patterns with respect to fracking sites. 
+ggplot(county_leukemia_125) +
+  geom_sf(aes(fill = cases_scaled), size = 1) +
+  geom_sf(data = fracking_locations_125_adjusted,
+          color = "red",
+          size = 2)+
+  scale_fill_gradient(low = "lightyellow", high = "violet", name = "Luekmia Cases (Scaled)")+
+  theme_minimal()
+```
+
+### Pair plot of variables
+
+#### Add median and mean of Fracking location sites
+
+```{r}
+
+# Calculate median for Dist2FracLoc_1 to Dist2FracLoc_10
+county_leukemia_125 <- county_leukemia_125 %>%
+  rowwise() %>%
+  mutate(FrackingLocationsDistance_median = median(c_across(starts_with("Dist2FracLoc_"))))
+
+# Calculate mean for Dist2FracLoc_1 to Dist2FracLoc_10
+county_leukemia_125 <- county_leukemia_125 %>%
+  rowwise() %>%
+  mutate(FrackingLocationsDistance_mean = mean(c_across(starts_with("Dist2FracLoc_"))))
+```
+
+#### Create Pair Plot
+
+```{r}
+selected_Vars <- county_leukemia_125[, c("leuk_cases","cases_scaled","FrackingLocationsDistance_median","FrackingLocationsDistance_mean", "AverageAge", "GreenNeighborhoodIndex", "CarsPerHH", "PctPopGrowth")]
+
+custom_labels <- c(
+  leuk_cases = "Leukemia Cases",
+  cases_scaled = "Scaled Cases",
+  FrackingLocationsDistance_median = "Median Fracking Dist",
+  FrackingLocationsDistance_mean = "Mean Fracking Dist",
+  AverageAge = "Average Age",
+  GreenNeighborhoodIndex = "Green Neighborhood Index",
+  CarsPerHH = "Cars per Household",
+  PctPopGrowth = "Population Growth"
+)
+
+selected_vars <- st_drop_geometry(selected_Vars)
+p <- ggpairs(selected_vars, 
+        lower = list(continuous = wrap("points", color = "purple")), 
+        diag = list(continuous = wrap("densityDiag", fill = "lightgreen")), 
+        upper = list(continuous = wrap("cor", color="black")),
+        columnLabels = custom_labels,
+        )
+
+ggsave("ggpairs_plot.png", plot = p, width = 12, height = 10, dpi = 300)
+```
+
+## Question 3: Is the data generating process of leukemia cases random or can you find and numerically prove a spatial clustering?
+
+```{r}
+# Checking if the geomtry is still valid
+class(county_leukemia_125)
+st_is_valid(county_leukemia_125)
+```
+
+```{r}
+
+neighbors <- poly2nb(county_leukemia_125)
+weights <- nb2listw(neighbors)
+
+# Calculate Moran's I
+moran_test <- moran.test(county_leukemia_125$leuk_cases, weights)
+print(moran_test)
+
+# Calculate Moran's I
+moran_test <- moran.test(county_leukemia_125$leuk_cases, weights)
+print(moran_test)
+
+# Calculate Moran's I
+moran_test <- moran.test(county_leukemia_125$cases_scaled, weights)
+print(moran_test)
+
+#-------------------------------------------------------------------------------------------------------
+# Visualize the clustering:
+# Ensure variable and spatial weights are valid
+luekemia_cases <- county_leukemia_125$leuk_cases
+weights <- nb2listw(poly2nb(county_leukemia_125))
+
+# Run Local Moran's I
+local_moran <- localmoran(luekemia_cases, weights)
+
+# Check the structure of the output
+str(local_moran)
+
+# Add results to your spatial dataset
+county_leukemia_125$local_I <- local_moran[, "Ii"]      # Local Moran's I statistic
+county_leukemia_125$z_score <- local_moran[, "Z.Ii"]    # Z-score
+county_leukemia_125$p_value <- 2 * (1 - pnorm(abs(local_moran[, "Z.Ii"])))  # Compute p-values if missing
+
+county_leukemia_125$cluster <- ifelse(county_leukemia_125$p_value < 0.05 & county_leukemia_125$local_I > 0, "Hotspot",
+               ifelse(county_leukemia_125$p_value < 0.05 & county_leukemia_125$local_I < 0, "Coldspot", "Not Significant"))
+
+# Plot hotspots and cold spots
+ggplot(data = county_leukemia_125) +
+  geom_sf(aes(fill = cluster)) +  # Color by cluster type
+  scale_fill_manual(values = c("Hotspot" = "orange", "Coldspot" = "green", "Not Significant" = "grey")) +
+  geom_sf(aes(fill = cluster), color = "black", size = 0.1)+
+  geom_sf(data = fracking_locations_125_adjusted,
+          color = "red",
+          size = 2)+
+  theme_minimal() +
+  labs(title = "LISA Analysis: Hotspots and Cold Spots",
+       fill = "Cluster Type")
+```
+
+## Question 4: Try to identify a significant correlation between the leukemia cases and explanatory variables using appropriate models.
+
+### Create Linear models for variables with Leukemia cases as target variable
+
+```{r}
+
+# Create linear models for explanatory variables
+fdm_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$FrackingLocationsDistance_median, county_leukemia_125)
+avg_age_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$AverageAge, county_leukemia_125)
+green_ng_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$GreenNeighborhoodIndex, county_leukemia_125)
+pct_pop_growth_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$PctPopGrowth, county_leukemia_125)
+
+# Combinations of explanatory variables
+fdm_avg_age_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$AverageAge + county_leukemia_125$FrackingLocationsDistance_median, county_leukemia_125)
+fdm_green_ng_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$GreenNeighborhoodIndex + county_leukemia_125$FrackingLocationsDistance_median, county_leukemia_125)
+fdm_pct_pop_growth_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$PctPopGrowth + county_leukemia_125$FrackingLocationsDistance_median, county_leukemia_125)
+
+# Combination of all explanatory variables
+fdm_avg_age_green_ng_pct_pop_growth_lm <- lm(county_leukemia_125$leuk_cases ~ county_leukemia_125$GreenNeighborhoodIndex + county_leukemia_125$FrackingLocationsDistance_median +county_leukemia_125$AverageAge+county_leukemia_125$PctPopGrowth, county_leukemia_125)
+
+screenreg(
+  list(fdm_lm,
+       avg_age_lm,
+       green_ng_lm,
+       pct_pop_growth_lm,
+       fdm_avg_age_lm,
+       fdm_green_ng_lm,
+       fdm_pct_pop_growth_lm,
+       fdm_avg_age_green_ng_pct_pop_growth_lm
+    ),
+  digits = 2
+)
+```
+
+### Plot Residuals vs Fitted Values
+
+```{r}
+
+plot_data <- data.frame(
+  FittedValues = fdm_lm$fitted.values,
+  Residuals = resid(fdm_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = avg_age_lm$fitted.values,
+  Residuals = resid(avg_age_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = green_ng_lm$fitted.values,
+  Residuals = resid(green_ng_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = pct_pop_growth_lm$fitted.values,
+  Residuals = resid(pct_pop_growth_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+#Checking fitness for combination of values------------------------------------
+plot_data <- data.frame(
+  FittedValues = fdm_avg_age_lm$fitted.values,
+  Residuals = resid(fdm_avg_age_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = fdm_green_ng_lm$fitted.values,
+  Residuals = resid(fdm_green_ng_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = fdm_pct_pop_growth_lm$fitted.values,
+  Residuals = resid(fdm_pct_pop_growth_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+plot_data <- data.frame(
+  FittedValues = fdm_avg_age_green_ng_pct_pop_growth_lm$fitted.values,
+  Residuals = resid(fdm_avg_age_green_ng_pct_pop_growth_lm)
+)
+
+# Create the ggplot
+ggplot(plot_data, aes(x = FittedValues, y = Residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values"
+  ) +
+  theme_minimal()
+
+
+```
+
+### Check with BP test
+
+```{r}
+bptest(fdm_avg_age_green_ng_pct_pop_growth_lm)
+```
+
+## Question 5: Account for any spatial process that may underlie the coherence identified in 4.
+
+### Do Moran Test for Leukemia Cases and the Residuals of a best model to check spatial autocorrelation.
+
+```{r}
+
+# Define neighbors and spatial weights
+neighbors <- poly2nb(county_leukemia_125)          # Neighbors based on polygons
+weights <- nb2listw(neighbors, style = "W")        # Spatial weights matrix
+
+# Moran's I test for the dependent variable
+moran_test <- moran.test(county_leukemia_125$leuk_cases, weights)
+print(moran_test)
+
+# Extract residuals from our best model
+fdm_avg_age_green_ng_pct_pop_growth_lm_residuals <- residuals(fdm_avg_age_green_ng_pct_pop_growth_lm)
+
+# Moran's I test for residuals
+moran_test_residuals <- moran.test(fdm_avg_age_green_ng_pct_pop_growth_lm_residuals, weights)
+print(moran_test_residuals)
+```
+
+### Significant Spatial Autocorrelation Found: Apply Spatial Regression Models
+
+```{r}
+# Both moran tests show high autocorrelation, we use spatial regression model now
+
+# Fit a spatial lag model
+slm_model <- lagsarlm(county_leukemia_125$leuk_cases ~ county_leukemia_125$FrackingLocationsDistance_median + county_leukemia_125$AverageAge + county_leukemia_125$GreenNeighborhoodIndex + county_leukemia_125$PctPopGrowth, data = county_leukemia_125, listw = weights)
+summary(slm_model)
+
+# Fit a spatial error model
+sem_model <- errorsarlm(county_leukemia_125$leuk_cases ~ county_leukemia_125$FrackingLocationsDistance_median + county_leukemia_125$AverageAge + county_leukemia_125$GreenNeighborhoodIndex + county_leukemia_125$PctPopGrowth, data = county_leukemia_125, listw = weights)
+summary(sem_model)
+
+AIC(fdm_avg_age_green_ng_pct_pop_growth_lm, slm_model, sem_model)
+
+moran.test(residuals(slm_model), weights)
+moran.test(residuals(sem_model), weights)
+
+# From the AIC and moran test we can conclude that the SEM model best fits and removes the spatial autocorrelation
+```
+
+## Question 6: Is there a relationship between the proximity to a fracking site and the number of leukemia cases? Underpin and justify your statement with data!
+
+```{r}
+ggplot(data = county_leukemia_125, aes(x = FrackingLocationsDistance_median, y = leuk_cases)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Relationship Between Fracking Proximity and Leukemia Cases",
+       x = "Proximity to Fracking Sites (Median Distance)",
+       y = "Number of Leukemia Cases")
+
+```
+
+```{r}
+# End of Assignment
+```
